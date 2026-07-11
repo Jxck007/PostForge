@@ -60,7 +60,14 @@ function isFirestoreDraft(value: unknown): value is FirestoreDraft {
 export async function loadUserDrafts(firestore: Firestore, uid: string) {
   const snapshot = await getDocs(query(draftsCollection(firestore, uid), orderBy('updatedAt', 'desc')))
   return snapshot.docs
-    .map((entry) => ({ ...entry.data(), id: entry.id }))
+    .map((entry) => {
+      const data = entry.data()
+      return {
+        ...data,
+        id: entry.id,
+        sourceUrl: typeof data.sourceUrl === 'string' ? data.sourceUrl : '',
+      }
+    })
     .filter(isFirestoreDraft)
 }
 
