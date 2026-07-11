@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./.codex/hooks/prompt_guard.sh",
+            "statusMessage": "Checking PostForge guardrails"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./.codex/hooks/stop_check.sh",
+            "statusMessage": "Running final reminder"
+          }
+        ]
+      }
+    ]
+  }
+}
