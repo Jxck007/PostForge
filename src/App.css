@@ -331,6 +331,26 @@
   background: rgba(154, 52, 18, 0.16);
 }
 
+.sync-message,
+.sync-error {
+  margin: 16px 0 0;
+  border-radius: 14px;
+  padding: 12px 14px;
+  font-size: 0.9rem;
+}
+
+.sync-message {
+  color: var(--accent-soft);
+  border: 1px solid rgba(76, 201, 240, 0.28);
+  background: rgba(76, 201, 240, 0.08);
+}
+
+.sync-error {
+  color: #fed7aa;
+  border: 1px solid rgba(251, 146, 60, 0.42);
+  background: rgba(154, 52, 18, 0.16);
+}
+
 .source-credit {
   margin: 0;
   padding: 12px 14px;

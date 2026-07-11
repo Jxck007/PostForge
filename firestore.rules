@@ -2,13 +2,52 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    function validDraft(draftId) {
+      let data = request.resource.data;
+      return data.keys().hasOnly([
+          'id',
+          'caption',
+          'hashtags',
+          'imageTitle',
+          'imageSubtitle',
+          'sourceTitle',
+          'sourceUrl',
+          'sourceName',
+          'postType',
+          'tone',
+          'status',
+          'createdAt',
+          'updatedAt',
+        ]) &&
+        data.id is string &&
+        data.id == draftId &&
+        data.caption is string &&
+        data.hashtags is list &&
+        data.imageTitle is string &&
+        data.imageSubtitle is string &&
+        data.sourceTitle is string &&
+        data.sourceName is string &&
+        data.postType is string &&
+        data.tone is string &&
+        data.status in ['draft', 'posted', 'archived'] &&
+        (!data.keys().hasAny(['sourceUrl']) || data.sourceUrl is string) &&
+        (!data.keys().hasAny(['createdAt']) || data.createdAt is string || data.createdAt is timestamp) &&
+        (!data.keys().hasAny(['updatedAt']) || data.updatedAt is string || data.updatedAt is timestamp);
+    }
+
     match /users/{userId} {
       match /drafts/{draftId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId) && validDraft(draftId);
+        allow delete: if isOwner(userId);
       }
 
-      match /settings/{settingId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+      match /settings/profile {
+        allow read, write: if isOwner(userId);
       }
     }
   }

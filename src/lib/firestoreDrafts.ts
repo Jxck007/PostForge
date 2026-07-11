@@ -36,9 +36,32 @@ export type ProfileSettings = {
 const draftsCollection = (firestore: Firestore, uid: string) =>
   collection(firestore, 'users', uid, 'drafts')
 
+function isFirestoreDraft(value: unknown): value is FirestoreDraft {
+  if (!value || typeof value !== 'object') return false
+  const draft = value as Record<string, unknown>
+  return (
+    typeof draft.id === 'string' &&
+    typeof draft.caption === 'string' &&
+    Array.isArray(draft.hashtags) &&
+    draft.hashtags.every((tag) => typeof tag === 'string') &&
+    typeof draft.imageTitle === 'string' &&
+    typeof draft.imageSubtitle === 'string' &&
+    typeof draft.sourceTitle === 'string' &&
+    typeof draft.sourceUrl === 'string' &&
+    typeof draft.sourceName === 'string' &&
+    typeof draft.postType === 'string' &&
+    typeof draft.tone === 'string' &&
+    (draft.status === 'draft' || draft.status === 'posted' || draft.status === 'archived') &&
+    typeof draft.createdAt === 'string' &&
+    typeof draft.updatedAt === 'string'
+  )
+}
+
 export async function loadUserDrafts(firestore: Firestore, uid: string) {
   const snapshot = await getDocs(query(draftsCollection(firestore, uid), orderBy('updatedAt', 'desc')))
-  return snapshot.docs.map((entry) => ({ id: entry.id, ...entry.data() }) as FirestoreDraft)
+  return snapshot.docs
+    .map((entry) => ({ ...entry.data(), id: entry.id }))
+    .filter(isFirestoreDraft)
 }
 
 export async function saveUserDraft(firestore: Firestore, uid: string, draft: FirestoreDraft) {
