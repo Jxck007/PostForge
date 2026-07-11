@@ -163,6 +163,25 @@ function formatDate(value: string) {
   })
 }
 
+function formatPublishedDate(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return 'Date unavailable'
+  }
+
+  return date.toLocaleDateString(undefined, {
+    month: 'short', day: 'numeric', year: 'numeric',
+  })
+}
+
+function exportDate() {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 function App() {
   const [activeSection, setActiveSection] = useState<NavSection>('dashboard')
   const [interests, setInterests] = useState<string[]>(() => readLocalStorage(INTERESTS_KEY, defaultInterests))
@@ -173,6 +192,7 @@ function App() {
   const [generatedPost, setGeneratedPost] = useState<GeneratedPost | null>(null)
   const [statusMessage, setStatusMessage] = useState('Ready for a reviewed, manual posting workflow.')
   const [isFetchingTopics, setIsFetchingTopics] = useState(false)
+  const [topicError, setTopicError] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [user, setUser] = useState<User | null>(null)
@@ -295,13 +315,16 @@ function App() {
 
   async function fetchTopics() {
     setIsFetchingTopics(true)
+    setTopicError('')
     try {
-      const result = await apiRequest<{ topics: Topic[] }>('/api/fetch-topics', { interests })
+      const result = await apiRequest<{ topics: Topic[] }>('/api/fetch-topics', { interests, limit: 10 })
       setRssTopics(result.topics)
       if (result.topics[0]) setSelectedTopicId(result.topics[0].id)
       setStatusMessage(result.topics.length ? `Found ${result.topics.length} RSS topics matched to your interests.` : 'No RSS topics matched yet. Starter topics remain available.')
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : 'Could not fetch topics.')
+      const message = error instanceof Error ? error.message : 'Could not fetch topics.'
+      setTopicError(message)
+      setStatusMessage(message)
     } finally {
       setIsFetchingTopics(false)
     }
@@ -366,7 +389,7 @@ function App() {
         pixelRatio: 1,
       })
       const link = document.createElement('a')
-      link.download = `postforge-${generatedPost.topicId}.png`
+      link.download = `postforge-card-${exportDate()}.png`
       link.href = dataUrl
       link.click()
       setStatusMessage('Downloaded a 1200 × 630 PNG card.')
@@ -426,13 +449,13 @@ function App() {
           <div className="column">
             <article className={activeSection === 'interests' ? 'panel focus' : 'panel'}><div className="panel-head"><div><p className="eyebrow">Interests manager</p><h3>{user ? 'Synced to your Firestore workspace' : 'Stored locally until you sign in'}</h3></div></div><div className="interest-form"><input value={interestInput} onChange={(event) => setInterestInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') addInterest() }} placeholder="Add an interest, like Local LLMs" aria-label="Add interest" /><button type="button" className="primary-button" onClick={addInterest}>Add</button></div><div className="chip-list">{interests.map((interest) => <button key={interest} type="button" className="chip" onClick={() => setInterests((current) => current.filter((item) => item !== interest))}>{interest}<span aria-hidden="true">×</span></button>)}</div></article>
 
-            <article className={activeSection === 'topics' ? 'panel focus' : 'panel'}><div className="panel-head"><div><p className="eyebrow">Topic finder</p><h3>Starter prompts or live RSS topics</h3></div><button type="button" className="secondary-button" onClick={fetchTopics} disabled={isFetchingTopics}>{isFetchingTopics ? <LoaderCircle className="spin" size={16} /> : <RefreshCw size={16} />}{isFetchingTopics ? 'Fetching topics' : 'Fetch RSS topics'}</button></div><div className="topic-list">{topicPool.map((topic) => <button key={topic.id} type="button" className={topic.id === selectedTopicId ? 'topic-card selected' : 'topic-card'} onClick={() => setSelectedTopicId(topic.id)}><div className="topic-meta"><span>{topic.source}</span><span>{topic.matchedKeywords.join(', ') || topic.format}</span></div><strong>{topic.title}</strong><p>{topic.summary}</p>{topic.url && <span className="topic-source">Source link preserved for the final draft.</span>}</button>)}</div></article>
+            <article className={activeSection === 'topics' ? 'panel focus' : 'panel'}><div className="panel-head"><div><p className="eyebrow">Topic finder</p><h3>Starter prompts or live RSS topics</h3></div><button type="button" className="secondary-button" onClick={fetchTopics} disabled={isFetchingTopics}>{isFetchingTopics ? <LoaderCircle className="spin" size={16} /> : <RefreshCw size={16} />}{isFetchingTopics ? 'Fetching topics' : 'Fetch RSS topics'}</button></div>{topicError && <div className="topic-error" role="alert">{topicError} Starter topics are still available.</div>}<div className="topic-list">{topicPool.map((topic) => <button key={topic.id} type="button" className={topic.id === selectedTopicId ? 'topic-card selected' : 'topic-card'} onClick={() => setSelectedTopicId(topic.id)}><div className="topic-meta"><span>{topic.source}</span><span>{topic.matchedKeywords.join(', ') || topic.format}</span></div><strong>{topic.title}</strong><p>{topic.summary}</p>{topic.url && <span className="topic-source">{formatPublishedDate(topic.publishedAt)} · Source link preserved for the final draft.</span>}</button>)}</div></article>
 
             <article className={activeSection === 'drafts' ? 'panel focus' : 'panel'}><div className="panel-head"><div><p className="eyebrow">Drafts</p><h3>{user ? 'Saved to Firestore' : 'Saved in LocalStorage'}</h3></div></div><div className="draft-list">{drafts.length === 0 ? <div className="empty-state">No drafts yet. Save a generated post to see it here.</div> : drafts.map((draft) => <button key={draft.id} type="button" className="draft-card" onClick={() => openDraft(draft)}><div><strong>{draft.title}</strong><p>{draft.cardSubtitle}</p></div><span>{formatDate(draft.updatedAt)}</span></button>)}</div></article>
           </div>
 
           <div className="column">
-            <article className={activeSection === 'create' ? 'panel focus' : 'panel'}><div className="panel-head"><div><p className="eyebrow">Post creator</p><h3>Generate, then edit every word</h3></div></div>{generatedPost ? <div className="editor-stack"><label><span>Caption</span><textarea rows={10} value={generatedPost.caption} onChange={(event) => setGeneratedPost((current) => current ? { ...current, caption: event.target.value } : current)} /></label><label><span>Hashtags</span><input value={generatedPost.hashtags.join(' ')} onChange={(event) => setGeneratedPost((current) => current ? { ...current, hashtags: event.target.value.split(' ').map((tag) => tag.trim()).filter(Boolean) } : current)} /></label><label><span>Card title</span><input value={generatedPost.cardTitle} onChange={(event) => setGeneratedPost((current) => current ? { ...current, cardTitle: event.target.value } : current)} /></label><label><span>Card subtitle</span><input value={generatedPost.cardSubtitle} onChange={(event) => setGeneratedPost((current) => current ? { ...current, cardSubtitle: event.target.value } : current)} /></label>{generatedPost.sourceCredit && <p className="source-credit">{generatedPost.sourceCredit}</p>}<div className="button-row">{safeExternalUrl(generatedPost.sourceUrl) && <a className="secondary-button" href={safeExternalUrl(generatedPost.sourceUrl)} target="_blank" rel="noreferrer">View source<ExternalLink size={16} /></a>}<button type="button" className="primary-button" onClick={copyCaption}><Copy size={16} />Copy caption</button><button type="button" className="secondary-button" onClick={downloadImage} disabled={isExporting}>{isExporting ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}{isExporting ? 'Exporting' : 'Download PNG'}</button><button type="button" className="secondary-button" onClick={saveDraft}>Save draft</button><a className="secondary-button" href={LINKEDIN_URL} target="_blank" rel="noreferrer">Open LinkedIn<ExternalLink size={16} /></a></div></div> : <div className="empty-state"><p>Select a topic, then create a local starter draft or generate one with Gemini.</p><div className="button-row empty-actions"><button type="button" className="secondary-button" onClick={createStarterDraft}>Create starter draft</button><button type="button" className="primary-button" onClick={generateWithGemini} disabled={isGenerating}>{isGenerating ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}{isGenerating ? 'Generating' : 'Generate with Gemini'}</button></div></div>}</article>
+            <article className={activeSection === 'create' ? 'panel focus' : 'panel'}><div className="panel-head"><div><p className="eyebrow">Post creator</p><h3>Generate, then edit every word</h3></div></div>{generatedPost ? <div className="editor-stack"><label><span>Caption</span><textarea rows={10} value={generatedPost.caption} onChange={(event) => setGeneratedPost((current) => current ? { ...current, caption: event.target.value } : current)} /></label><label><span>Hashtags</span><input value={generatedPost.hashtags.join(' ')} onChange={(event) => setGeneratedPost((current) => current ? { ...current, hashtags: event.target.value.split(' ').map((tag) => tag.trim()).filter(Boolean) } : current)} /></label><label><span>Card title</span><input value={generatedPost.cardTitle} onChange={(event) => setGeneratedPost((current) => current ? { ...current, cardTitle: event.target.value } : current)} /></label><label><span>Card subtitle</span><input value={generatedPost.cardSubtitle} onChange={(event) => setGeneratedPost((current) => current ? { ...current, cardSubtitle: event.target.value } : current)} /></label>{generatedPost.sourceCredit && <p className="source-credit">{generatedPost.sourceCredit}</p>}<div className="button-row">{safeExternalUrl(generatedPost.sourceUrl) && <a className="secondary-button" href={safeExternalUrl(generatedPost.sourceUrl)} target="_blank" rel="noreferrer">View source<ExternalLink size={16} /></a>}<button type="button" className="primary-button" onClick={copyCaption}><Copy size={16} />Copy caption</button><button type="button" className="secondary-button" onClick={downloadImage} disabled={isExporting}>{isExporting ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}{isExporting ? 'Exporting' : 'Download Image'}</button><button type="button" className="secondary-button" onClick={saveDraft}>Save draft</button><a className="secondary-button" href={LINKEDIN_URL} target="_blank" rel="noreferrer">Open LinkedIn<ExternalLink size={16} /></a></div></div> : <div className="empty-state"><p>Select a topic, then create a local starter draft or generate one with Gemini.</p><div className="button-row empty-actions"><button type="button" className="secondary-button" onClick={createStarterDraft}>Create starter draft</button><button type="button" className="primary-button" onClick={generateWithGemini} disabled={isGenerating}>{isGenerating ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}{isGenerating ? 'Generating' : 'Generate with Gemini'}</button></div></div>}</article>
 
             {generatedPost && <article className="panel generation-actions"><div><p className="eyebrow">Current topic</p><h3>{generatedPost.topicTitle}</h3></div><div className="button-row"><button type="button" className="secondary-button" onClick={createStarterDraft}>Reset to starter</button><button type="button" className="primary-button" onClick={generateWithGemini} disabled={isGenerating}>{isGenerating ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}{isGenerating ? 'Generating' : 'Regenerate with Gemini'}</button></div></article>}
 

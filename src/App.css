@@ -322,6 +322,15 @@
   font-size: 0.82rem;
 }
 
+.topic-error {
+  margin-top: 18px;
+  border: 1px solid rgba(251, 146, 60, 0.42);
+  border-radius: 14px;
+  padding: 12px 14px;
+  color: #fed7aa;
+  background: rgba(154, 52, 18, 0.16);
+}
+
 .source-credit {
   margin: 0;
   padding: 12px 14px;

@@ -19,9 +19,9 @@ type Topic = {
 }
 
 const feeds = [
+  { name: 'freeCodeCamp', url: 'https://www.freecodecamp.org/news/rss/' },
+  { name: 'DEV Community', url: 'https://dev.to/feed' },
   { name: 'Hacker News', url: 'https://hnrss.org/frontpage' },
-  { name: 'Google AI Blog', url: 'https://blog.google/technology/ai/rss/' },
-  { name: 'React Blog', url: 'https://react.dev/rss.xml' },
 ]
 
 function bodyAsObject(body: unknown): Record<string, unknown> {
@@ -88,6 +88,30 @@ async function readFeed(feed: { name: string; url: string }) {
   return feedItems(await result.text(), feed.name)
 }
 
+function freshnessScore(publishedAt: string) {
+  const timestamp = Date.parse(publishedAt)
+  if (Number.isNaN(timestamp)) {
+    return 0
+  }
+
+  const ageInHours = Math.max(0, (Date.now() - timestamp) / (1000 * 60 * 60))
+  if (ageInHours <= 24) {
+    return 6
+  }
+  if (ageInHours <= 24 * 7) {
+    return 4
+  }
+  if (ageInHours <= 24 * 30) {
+    return 2
+  }
+  return 0
+}
+
+function publishedTimestamp(publishedAt: string) {
+  const timestamp = Date.parse(publishedAt)
+  return Number.isNaN(timestamp) ? 0 : timestamp
+}
+
 export default async function handler(request: ApiRequest, response: ApiResponse) {
   response.setHeader('Content-Type', 'application/json; charset=utf-8')
   if (request.method !== 'POST') {
@@ -96,11 +120,12 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     return
   }
 
-  const rawInterests = bodyAsObject(request.body).interests
+  const body = bodyAsObject(request.body)
+  const rawInterests = body.interests
   const interests = Array.isArray(rawInterests)
     ? rawInterests
         .filter((interest): interest is string => typeof interest === 'string')
-        .map((interest) => interest.trim().toLowerCase())
+        .map((interest) => interest.trim().toLowerCase().slice(0, 80))
         .filter(Boolean)
         .slice(0, 12)
     : []
@@ -110,14 +135,33 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     return
   }
 
+  const rawLimit = body.limit
+  if (rawLimit !== undefined && (!Number.isInteger(rawLimit) || typeof rawLimit !== 'number')) {
+    response.status(400).json({ error: 'Limit must be a whole number.' })
+    return
+  }
+  const limit = Math.min(Math.max(rawLimit ?? 10, 1), 10)
+
   try {
     const results = await Promise.allSettled(feeds.map(readFeed))
+    const successfulFeeds = results.filter((result) => result.status === 'fulfilled')
+    if (successfulFeeds.length === 0) {
+      response.status(502).json({ error: 'Could not reach the topic feeds right now. Please try again.' })
+      return
+    }
+
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        console.warn('RSS feed failed', result.reason)
+      }
+    }
+
     const items = results.flatMap((result) => (result.status === 'fulfilled' ? result.value : []))
     const topics: Topic[] = items
       .map((item) => {
         const haystack = `${item.title} ${item.summary}`.toLowerCase()
         const matchedKeywords = interests.filter((interest) => haystack.includes(interest))
-        const score = matchedKeywords.length * 10 + (item.summary ? 2 : 0)
+        const score = matchedKeywords.length * 10 + freshnessScore(item.publishedAt)
         return {
           id: `${item.source}-${item.url || item.title}`.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 120),
           ...item,
@@ -126,8 +170,8 @@ export default async function handler(request: ApiRequest, response: ApiResponse
         }
       })
       .filter((topic) => topic.title && isHttpUrl(topic.url) && topic.matchedKeywords.length > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 10)
+      .sort((a, b) => b.score - a.score || publishedTimestamp(b.publishedAt) - publishedTimestamp(a.publishedAt))
+      .slice(0, limit)
 
     response.status(200).json({ topics })
   } catch (error) {
