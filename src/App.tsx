@@ -1,7 +1,5 @@
 import { toPng } from 'html-to-image'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth'
-import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore'
 import {
   Compass,
   Copy,
@@ -15,7 +13,15 @@ import {
   Tag,
 } from 'lucide-react'
 import './App.css'
-import { auth, db, isFirebaseConfigured } from './lib/firebase'
+import { db, isFirebaseConfigured } from './lib/firebase'
+import {
+  importUserDrafts,
+  loadUserDrafts,
+  saveProfileSettings,
+  saveUserDraft,
+  type FirestoreDraft,
+} from './lib/firestoreDrafts'
+import { useAuth } from './hooks/useAuth'
 
 type NavSection = 'dashboard' | 'interests' | 'topics' | 'create' | 'drafts'
 
@@ -42,11 +48,20 @@ type GeneratedPost = {
   topicTitle: string
   sourceCredit: string
   sourceUrl: string
+  sourceName: string
+  postType: string
+  tone: string
 }
 
-type Draft = GeneratedPost & { id: string; updatedAt: string }
+type Draft = GeneratedPost & {
+  id: string
+  createdAt: string
+  updatedAt: string
+  status: 'draft' | 'posted' | 'archived'
+}
 
 type GenerateResponse = {
+  postType: string
   caption: string
   hashtags: string[]
   imageTitle: string
@@ -132,6 +147,9 @@ function buildStarterPost(topic: Topic): GeneratedPost {
     cardSubtitle: `${interest} perspective for student builders`,
     sourceCredit: topic.url ? `Source: ${topic.source}` : '',
     sourceUrl: topic.url,
+    sourceName: topic.source,
+    postType: topic.format || 'Insight',
+    tone: 'Conversational',
   }
 }
 
@@ -182,6 +200,45 @@ function exportDate() {
   return `${year}-${month}-${day}`
 }
 
+function toFirestoreDraft(draft: Draft): FirestoreDraft {
+  return {
+    id: draft.id,
+    caption: draft.caption,
+    hashtags: draft.hashtags,
+    imageTitle: draft.cardTitle,
+    imageSubtitle: draft.cardSubtitle,
+    sourceTitle: draft.topicTitle,
+    sourceUrl: draft.sourceUrl,
+    sourceName: draft.sourceName,
+    postType: draft.postType,
+    tone: draft.tone,
+    status: draft.status,
+    createdAt: draft.createdAt,
+    updatedAt: draft.updatedAt,
+  }
+}
+
+function fromFirestoreDraft(draft: FirestoreDraft): Draft {
+  return {
+    id: draft.id,
+    title: draft.sourceTitle,
+    topicId: draft.id,
+    topicTitle: draft.sourceTitle,
+    caption: draft.caption,
+    hashtags: draft.hashtags,
+    cardTitle: draft.imageTitle,
+    cardSubtitle: draft.imageSubtitle,
+    sourceCredit: draft.sourceName ? `Source: ${draft.sourceName}` : '',
+    sourceUrl: draft.sourceUrl,
+    sourceName: draft.sourceName,
+    postType: draft.postType,
+    tone: draft.tone,
+    status: draft.status,
+    createdAt: draft.createdAt,
+    updatedAt: draft.updatedAt,
+  }
+}
+
 function App() {
   const [activeSection, setActiveSection] = useState<NavSection>('dashboard')
   const [interests, setInterests] = useState<string[]>(() => readLocalStorage(INTERESTS_KEY, defaultInterests))
@@ -195,62 +252,58 @@ function App() {
   const [topicError, setTopicError] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
-  const [user, setUser] = useState<User | null>(null)
-  const [isAuthLoading, setIsAuthLoading] = useState(isFirebaseConfigured)
-  const [isCloudDataReady, setIsCloudDataReady] = useState(false)
+  const { user, isLoading: isAuthLoading, error: authError, signInWithGoogle, signOutUser: signOutFromGoogle } = useAuth()
   const [isSigningIn, setIsSigningIn] = useState(false)
+  const [isDraftSyncLoading, setIsDraftSyncLoading] = useState(false)
+  const [draftSyncError, setDraftSyncError] = useState('')
+  const [isImportingDrafts, setIsImportingDrafts] = useState(false)
   const imageCardRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    const firebaseAuth = auth
     const firestore = db
-    if (!firebaseAuth || !firestore) {
+    if (!user || !firestore) {
+      setDrafts(readLocalStorage(DRAFTS_KEY, [] as Draft[]))
+      setIsDraftSyncLoading(false)
       return
     }
 
-    return onAuthStateChanged(firebaseAuth, async (nextUser) => {
-      setUser(nextUser)
-      setIsAuthLoading(false)
-      setIsCloudDataReady(false)
+    let isCurrent = true
+    setIsDraftSyncLoading(true)
+    setDraftSyncError('')
+    void Promise.all([
+      loadUserDrafts(firestore, user.uid),
+      saveProfileSettings(firestore, user.uid, {
+        displayName: user.displayName || '',
+        email: user.email || '',
+        updatedAt: new Date().toISOString(),
+      }),
+    ])
+      .then(([cloudDrafts]) => {
+        if (!isCurrent) return
+        setDrafts(cloudDrafts.map(fromFirestoreDraft))
+        setStatusMessage(`Cloud workspace ready for ${user.displayName || 'your account'}.`)
+      })
+      .catch(() => {
+        if (!isCurrent) return
+        setDraftSyncError('Could not load your Firestore drafts. Guest drafts remain on this device.')
+        setStatusMessage('Could not load your Firestore drafts.')
+      })
+      .finally(() => {
+        if (isCurrent) setIsDraftSyncLoading(false)
+      })
 
-      if (!nextUser) {
-        return
-      }
-
-      try {
-        const profileRef = doc(firestore, 'users', nextUser.uid)
-        const profile = await getDoc(profileRef)
-        const data = profile.data()
-        if (Array.isArray(data?.interests)) {
-          setInterests(data.interests.filter((interest): interest is string => typeof interest === 'string'))
-        }
-        if (Array.isArray(data?.drafts)) {
-          setDrafts(data.drafts.filter((draft): draft is Draft => Boolean(draft) && typeof draft === 'object' && typeof draft.id === 'string' && typeof draft.caption === 'string'))
-        }
-        setStatusMessage(`Cloud workspace ready for ${nextUser.displayName || 'your account'}.`)
-      } catch {
-        setStatusMessage('Could not load your cloud workspace. Local drafts are still available.')
-      } finally {
-        setIsCloudDataReady(true)
-      }
-    })
-  }, [])
+    return () => {
+      isCurrent = false
+    }
+  }, [user])
 
   useEffect(() => {
-    if (user && db && isCloudDataReady) {
-      void setDoc(
-        doc(db, 'users', user.uid),
-        { interests, drafts, updatedAt: serverTimestamp() },
-        { merge: true },
-      ).catch(() => setStatusMessage('Could not save to Firestore. Your current edits remain in this browser.'))
-      return
-    }
+    window.localStorage.setItem(INTERESTS_KEY, JSON.stringify(interests))
+  }, [interests])
 
-    if (!user) {
-      window.localStorage.setItem(INTERESTS_KEY, JSON.stringify(interests))
-      window.localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts))
-    }
-  }, [drafts, interests, isCloudDataReady, user])
+  useEffect(() => {
+    if (!user) window.localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts))
+  }, [drafts, user])
 
   const starterTopics = useMemo(() => {
     const lowered = interests.map((interest) => interest.toLowerCase())
@@ -288,28 +341,19 @@ function App() {
   }
 
   async function signIn() {
-    if (!auth) {
-      setStatusMessage('Firebase is not configured. Add the VITE_FIREBASE values to enable sign-in.')
-      return
-    }
-
     setIsSigningIn(true)
     try {
-      await signInWithPopup(auth, new GoogleAuthProvider())
-    } catch {
-      setStatusMessage('Google sign-in could not be completed. Confirm the provider and domain are enabled in Firebase Auth.')
+      const didSignIn = await signInWithGoogle()
+      if (didSignIn) setStatusMessage('Signed in. Loading your Firestore workspace.')
     } finally {
       setIsSigningIn(false)
     }
   }
 
   async function signOutUser() {
-    if (!auth) return
-    try {
-      await signOut(auth)
+    const didSignOut = await signOutFromGoogle()
+    if (didSignOut) {
       setStatusMessage('Signed out. New changes will stay in this browser until you sign in again.')
-    } catch {
-      setStatusMessage('Could not sign out. Please try again.')
     }
   }
 
@@ -358,6 +402,9 @@ function App() {
         cardSubtitle: result.imageSubtitle,
         sourceCredit: result.sourceCredit,
         sourceUrl: selectedTopic.url,
+        sourceName: selectedTopic.source,
+        postType: result.postType,
+        tone: 'Conversational',
       })
       setActiveSection('create')
       setStatusMessage('Generated a draft with Gemini. Review every line before posting.')
@@ -400,18 +447,66 @@ function App() {
     }
   }
 
-  function saveDraft() {
+  async function saveDraft() {
     if (!generatedPost) return
-    const nextDraft: Draft = { ...generatedPost, id: `${generatedPost.topicId}-${Date.now()}`, updatedAt: new Date().toISOString() }
-    setDrafts((current) => [nextDraft, ...current].slice(0, 12))
+    const timestamp = new Date().toISOString()
+    const nextDraft: Draft = {
+      ...generatedPost,
+      id: `${generatedPost.topicId}-${Date.now()}`,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      status: 'draft',
+    }
+
+    if (user && db) {
+      setIsDraftSyncLoading(true)
+      try {
+        await saveUserDraft(db, user.uid, toFirestoreDraft(nextDraft))
+        setDrafts((current) => [nextDraft, ...current.filter((draft) => draft.id !== nextDraft.id)])
+        setStatusMessage(`Saved draft "${nextDraft.title}" to Firestore.`)
+      } catch {
+        setDraftSyncError('Could not save this draft to Firestore. It has not been uploaded.')
+        setStatusMessage('Could not save the draft to Firestore.')
+      } finally {
+        setIsDraftSyncLoading(false)
+      }
+    } else {
+      setDrafts((current) => [nextDraft, ...current].slice(0, 12))
+      setStatusMessage(`Saved draft "${nextDraft.title}" locally.`)
+    }
+
     setActiveSection('drafts')
-    setStatusMessage(`Saved draft "${generatedPost.title}" locally.`)
+  }
+
+  async function importLocalDrafts() {
+    if (!user || !db) return
+    const localDrafts = readLocalStorage(DRAFTS_KEY, [] as Draft[])
+    if (localDrafts.length === 0) {
+      setStatusMessage('There are no local drafts to import.')
+      return
+    }
+
+    setIsImportingDrafts(true)
+    setDraftSyncError('')
+    try {
+      await importUserDrafts(db, user.uid, localDrafts.map(toFirestoreDraft))
+      const cloudDrafts = await loadUserDrafts(db, user.uid)
+      setDrafts(cloudDrafts.map(fromFirestoreDraft))
+      setStatusMessage(`Imported ${localDrafts.length} local draft${localDrafts.length === 1 ? '' : 's'} to Firestore.`)
+    } catch {
+      setDraftSyncError('Could not import local drafts. Please try again.')
+      setStatusMessage('Could not import local drafts.')
+    } finally {
+      setIsImportingDrafts(false)
+    }
   }
 
   function openDraft(draft: Draft) {
-    const { id: _id, updatedAt: _updatedAt, ...post } = draft
+    const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, status: _status, ...post } = draft
     void _id
+    void _createdAt
     void _updatedAt
+    void _status
     setGeneratedPost(post)
     setActiveSection('create')
     setStatusMessage(`Loaded draft "${draft.title}".`)
