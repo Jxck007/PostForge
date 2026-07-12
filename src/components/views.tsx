@@ -15,3 +15,7 @@ export function StudioView({ children }: { children: ReactNode }) {
 export function LibraryView({ children }: { children: ReactNode }) {
   return <div className="library-view">{children}</div>
 }
+
+export function SettingsView({ children }: { children: ReactNode }) {
+  return <div className="settings-view">{children}</div>
+}

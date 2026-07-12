@@ -9,16 +9,17 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  --bg: #0a0b0e;
-  --surface: #13151a;
-  --surface-raised: #191c23;
-  --surface-paper: #efede6;
-  --border: #2a2e37;
-  --text-strong: #f4f1ea;
-  --muted-text: #a9adb5;
-  --accent: #4c7dff;
-  --accent-soft: #a9c0ff;
-  --warm: #e7a467;
+  --bg: #0d0c0a;
+  --surface: #171512;
+  --surface-raised: #201d19;
+  --surface-paper: #f0e7d8;
+  --border: #38322b;
+  --text-strong: #f7f0e6;
+  --muted-text: #b8afa3;
+  --accent: #ed6a2c;
+  --accent-soft: #ffb07c;
+  --warm: #d98a52;
+  --success: #65a875;
   --radius-sm: 10px;
   --radius-md: 14px;
   --radius-lg: 22px;
@@ -43,9 +44,7 @@ html {
 body {
   margin: 0;
   min-width: 320px;
-  background:
-    radial-gradient(circle at top left, rgba(76, 125, 255, 0.14), transparent 28%),
-    var(--bg);
+  background: var(--bg);
 }
 
 button,
