@@ -10,9 +10,10 @@ import {
   PenSquare,
   RefreshCw,
   Sparkles,
-  Tag,
 } from 'lucide-react'
 import './App.css'
+import { AppShell, type AppView } from './components/AppShell'
+import { DiscoverView, LibraryView, StudioView, TodayView } from './components/views'
 import { db, isFirebaseConfigured } from './lib/firebase'
 import {
   importUserDrafts,
@@ -22,8 +23,6 @@ import {
   type FirestoreDraft,
 } from './lib/firestoreDrafts'
 import { useAuth } from './hooks/useAuth'
-
-type NavSection = 'dashboard' | 'interests' | 'topics' | 'create' | 'drafts'
 
 type Topic = {
   id: string
@@ -241,7 +240,8 @@ function fromFirestoreDraft(draft: FirestoreDraft): Draft {
 }
 
 function App() {
-  const [activeSection, setActiveSection] = useState<NavSection>('dashboard')
+  const [activeView, setActiveView] = useState<AppView>('today')
+  const [isRailExpanded, setIsRailExpanded] = useState(false)
   const [interests, setInterests] = useState<string[]>(() => readLocalStorage(INTERESTS_KEY, defaultInterests))
   const [drafts, setDrafts] = useState<Draft[]>(() => readLocalStorage(DRAFTS_KEY, []))
   const [interestInput, setInterestInput] = useState('')
@@ -378,7 +378,7 @@ function App() {
   function createStarterDraft() {
     if (!selectedTopic) return
     setGeneratedPost(buildStarterPost(selectedTopic))
-    setActiveSection('create')
+    setActiveView('studio')
     setStatusMessage('Created an editable starter draft. Use Gemini when the server is configured.')
   }
 
@@ -407,7 +407,7 @@ function App() {
         postType: result.postType,
         tone: 'Conversational',
       })
-      setActiveSection('create')
+      setActiveView('studio')
       setStatusMessage('Generated a draft with Gemini. Review every line before posting.')
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : 'Could not generate a draft.')
@@ -476,7 +476,7 @@ function App() {
       setStatusMessage(`Saved draft "${nextDraft.title}" locally.`)
     }
 
-    setActiveSection('drafts')
+    setActiveView('library')
   }
 
   async function importLocalDrafts() {
@@ -509,60 +509,33 @@ function App() {
     void _updatedAt
     void _status
     setGeneratedPost(post)
-    setActiveSection('create')
+    setActiveView('studio')
     setStatusMessage(`Loaded draft "${draft.title}".`)
   }
 
-  const navItems: Array<{ id: NavSection; label: string; icon: typeof LayoutDashboard }> = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'interests', label: 'Interests', icon: Tag },
-    { id: 'topics', label: 'Topic Finder', icon: Compass },
-    { id: 'create', label: 'Create Post', icon: PenSquare },
-    { id: 'drafts', label: 'Drafts', icon: Sparkles },
+  const navItems: Array<{ id: AppView; label: string; icon: typeof LayoutDashboard }> = [
+    { id: 'today', label: 'Today', icon: LayoutDashboard },
+    { id: 'discover', label: 'Discover', icon: Compass },
+    { id: 'studio', label: 'Studio', icon: PenSquare },
+    { id: 'library', label: 'Library', icon: Sparkles },
   ]
 
-  return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand-block"><div className="brand-mark">PF</div><div><p className="eyebrow">Personal V1</p><h1>PostForge</h1></div></div>
-        <nav className="sidebar-nav" aria-label="Primary">
-          {navItems.map((item) => {
-            const Icon = item.icon
-            return <button key={item.id} type="button" className={item.id === activeSection ? 'nav-item active' : 'nav-item'} onClick={() => setActiveSection(item.id)}><Icon size={18} /><span>{item.label}</span></button>
-          })}
-        </nav>
-        <div className="sidebar-panel"><p className="panel-label">Manual workflow only</p><p className="panel-copy">Review the draft, copy the caption, download the card, then open LinkedIn yourself.</p></div>
-      </aside>
+  const topbar = {
+    today: { title: 'Today', actionLabel: 'Start a draft', onAction: createStarterDraft, disabled: false },
+    discover: { title: 'Discover', actionLabel: isFetchingTopics ? 'Fetching topics' : 'Fetch topics', onAction: fetchTopics, disabled: isFetchingTopics },
+    studio: { title: 'Studio', actionLabel: 'New mock draft', onAction: createStarterDraft, disabled: false },
+    library: { title: 'Library', actionLabel: user ? 'Import local drafts' : 'Discover topics', onAction: user ? importLocalDrafts : () => setActiveView('discover'), disabled: Boolean(user && (isImportingDrafts || isDraftSyncLoading)) },
+  }[activeView]
 
-      <main className="main-content">
-        <header className="topbar"><div><p className="eyebrow">Student builder workflow</p><h2>Turn relevant topics into reviewed post drafts.</h2></div><div className="topbar-actions"><div className="status-pill" role="status">{statusMessage}</div>{user ? <div className="account-menu"><span className="account-name">{user.displayName || user.email || 'Signed in'}</span><button type="button" className="secondary-button compact-button" onClick={signOutUser}>Sign out</button></div> : <button type="button" className="secondary-button compact-button" onClick={signIn} disabled={isSigningIn || isAuthLoading}>{isSigningIn ? 'Signing in' : isAuthLoading ? 'Checking account' : isFirebaseConfigured ? 'Sign in with Google' : 'Cloud setup needed'}</button>}</div>{authError && <div className="sync-error" role="alert">{authError}</div>}</header>
-        <section className="dashboard-grid">
-          <article className="hero-card"><p className="eyebrow">Dashboard</p><h3>Find a topic, shape the draft, then keep final control.</h3><p className="hero-copy">PostForge uses RSS discovery and Gemini only to prepare editable material. Nothing is posted or sent to LinkedIn automatically.</p><div className="stats-row">{dashboardStats.map((stat) => <div key={stat.label} className="stat-card"><strong>{stat.value}</strong><span>{stat.label}</span></div>)}</div></article>
-          <article className="quick-panel"><p className="eyebrow">Workflow</p><ol className="workflow-list"><li>Choose interests and fetch relevant RSS topics.</li><li>Generate or start an editable LinkedIn draft.</li><li>Copy text, download the PNG, and post manually.</li></ol></article>
-        </section>
+  const account = user ? <button type="button" className="account-control" onClick={signOutUser}>{user.displayName || user.email || 'Sign out'}</button> : <button type="button" className="account-control" onClick={signIn} disabled={isSigningIn || isAuthLoading}>{isSigningIn ? 'Signing in' : isAuthLoading ? 'Checking account' : isFirebaseConfigured ? 'Sign in' : 'Guest mode'}</button>
 
-        <section className="content-grid">
-          <div className="column">
-            <article className={activeSection === 'interests' ? 'panel focus' : 'panel'}><div className="panel-head"><div><p className="eyebrow">Interests manager</p><h3>{user ? 'Synced to your Firestore workspace' : 'Stored locally until you sign in'}</h3></div></div><div className="interest-form"><input value={interestInput} onChange={(event) => setInterestInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') addInterest() }} placeholder="Add an interest, like Local LLMs" aria-label="Add interest" /><button type="button" className="primary-button" onClick={addInterest}>Add</button></div><div className="chip-list">{interests.map((interest) => <button key={interest} type="button" className="chip" onClick={() => setInterests((current) => current.filter((item) => item !== interest))}>{interest}<span aria-hidden="true">×</span></button>)}</div></article>
-
-            <article className={activeSection === 'topics' ? 'panel focus' : 'panel'}><div className="panel-head"><div><p className="eyebrow">Topic finder</p><h3>Starter prompts or live RSS topics</h3></div><button type="button" className="secondary-button" onClick={fetchTopics} disabled={isFetchingTopics}>{isFetchingTopics ? <LoaderCircle className="spin" size={16} /> : <RefreshCw size={16} />}{isFetchingTopics ? 'Fetching topics' : 'Fetch RSS topics'}</button></div>{topicError && <div className="topic-error" role="alert">{topicError} Starter topics are still available.</div>}<div className="topic-list">{topicPool.map((topic) => <button key={topic.id} type="button" className={topic.id === selectedTopicId ? 'topic-card selected' : 'topic-card'} onClick={() => setSelectedTopicId(topic.id)}><div className="topic-meta"><span>{topic.source}</span><span>{topic.matchedKeywords.join(', ') || topic.format}</span></div><strong>{topic.title}</strong><p>{topic.summary}</p>{topic.url && <span className="topic-source">{formatPublishedDate(topic.publishedAt)} · Source link preserved for the final draft.</span>}</button>)}</div></article>
-
-            <article className={activeSection === 'drafts' ? 'panel focus' : 'panel'}><div className="panel-head"><div><p className="eyebrow">Drafts</p><h3>{user ? 'Saved to Firestore' : 'Saved in LocalStorage'}</h3></div>{user && <button type="button" className="secondary-button compact-button" onClick={importLocalDrafts} disabled={isImportingDrafts || isDraftSyncLoading}>{isImportingDrafts ? 'Importing' : 'Import local drafts'}</button>}</div>{isDraftSyncLoading && <p className="sync-message">Syncing your Firestore drafts…</p>}{draftSyncError && <div className="sync-error" role="alert">{draftSyncError}</div>}<div className="draft-list">{drafts.length === 0 ? <div className="empty-state">No drafts yet. Save a generated post to see it here.</div> : drafts.map((draft) => <button key={draft.id} type="button" className="draft-card" onClick={() => openDraft(draft)}><div><strong>{draft.title}</strong><p>{draft.cardSubtitle}</p></div><span>{formatDate(draft.updatedAt)}</span></button>)}</div></article>
-          </div>
-
-          <div className="column">
-            <article className={activeSection === 'create' ? 'panel focus' : 'panel'}><div className="panel-head"><div><p className="eyebrow">Post creator</p><h3>Generate, then edit every word</h3></div></div>{generatedPost ? <div className="editor-stack"><label><span>Caption</span><textarea rows={10} value={generatedPost.caption} onChange={(event) => setGeneratedPost((current) => current ? { ...current, caption: event.target.value } : current)} /></label><label><span>Hashtags</span><input value={generatedPost.hashtags.join(' ')} onChange={(event) => setGeneratedPost((current) => current ? { ...current, hashtags: event.target.value.split(' ').map((tag) => tag.trim()).filter(Boolean) } : current)} /></label><label><span>Card title</span><input value={generatedPost.cardTitle} onChange={(event) => setGeneratedPost((current) => current ? { ...current, cardTitle: event.target.value } : current)} /></label><label><span>Card subtitle</span><input value={generatedPost.cardSubtitle} onChange={(event) => setGeneratedPost((current) => current ? { ...current, cardSubtitle: event.target.value } : current)} /></label>{generatedPost.sourceCredit && <p className="source-credit">{generatedPost.sourceCredit}</p>}<div className="button-row">{safeExternalUrl(generatedPost.sourceUrl) && <a className="secondary-button" href={safeExternalUrl(generatedPost.sourceUrl)} target="_blank" rel="noreferrer">View source<ExternalLink size={16} /></a>}<button type="button" className="primary-button" onClick={copyCaption}><Copy size={16} />Copy caption</button><button type="button" className="secondary-button" onClick={downloadImage} disabled={isExporting}>{isExporting ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}{isExporting ? 'Exporting' : 'Download Image'}</button><button type="button" className="secondary-button" onClick={saveDraft} disabled={Boolean(user && isDraftSyncLoading)}>Save draft</button><a className="secondary-button" href={LINKEDIN_URL} target="_blank" rel="noreferrer">Open LinkedIn<ExternalLink size={16} /></a></div></div> : <div className="empty-state"><p>Select a topic, then create a local starter draft or generate one with Gemini.</p><div className="button-row empty-actions"><button type="button" className="secondary-button" onClick={createStarterDraft}>Create starter draft</button><button type="button" className="primary-button" onClick={generateWithGemini} disabled={isGenerating}>{isGenerating ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}{isGenerating ? 'Generating' : 'Generate with Gemini'}</button></div></div>}</article>
-
-            {generatedPost && <article className="panel generation-actions"><div><p className="eyebrow">Current topic</p><h3>{generatedPost.topicTitle}</h3></div><div className="button-row"><button type="button" className="secondary-button" onClick={createStarterDraft}>Reset to starter</button><button type="button" className="primary-button" onClick={generateWithGemini} disabled={isGenerating}>{isGenerating ? <LoaderCircle className="spin" size={16} /> : <Sparkles size={16} />}{isGenerating ? 'Generating' : 'Regenerate with Gemini'}</button></div></article>}
-
-            <div className="preview-grid"><article className="panel preview-panel"><div className="panel-head"><div><p className="eyebrow">LinkedIn-style preview</p><h3>Caption review</h3></div></div>{generatedPost ? <div className="linkedin-preview"><div className="profile-row"><div className="avatar">J</div><div><strong>Jack</strong><p>Student developer · Building in public</p></div></div><p className="preview-caption">{generatedPost.caption}</p><div className="hashtag-row">{generatedPost.hashtags.map((tag, index) => <span key={`${tag}-${index}`}>{tag}</span>)}</div></div> : <div className="empty-state">Preview appears here after generation.</div>}</article>
-              <article className="panel preview-panel"><div className="panel-head"><div><p className="eyebrow">Image card preview</p><h3>Shareable visual</h3></div></div>{generatedPost ? <div className="image-card-preview" ref={imageCardRef}><div className="image-card-overlay" /><p className="image-card-kicker">PostForge · Student builder</p><strong>{generatedPost.cardTitle}</strong><span>{generatedPost.cardSubtitle}</span></div> : <div className="empty-state">Card preview appears here after generation.</div>}</article>
-            </div>
-          </div>
-        </section>
-      </main>
-    </div>
-  )
+  return <AppShell activeView={activeView} onViewChange={setActiveView} navigation={navItems} isRailExpanded={isRailExpanded} onRailToggle={() => setIsRailExpanded((current) => !current)} title={topbar.title} actionLabel={topbar.actionLabel} onAction={topbar.onAction} actionDisabled={topbar.disabled} isCloudWorkspace={Boolean(user)} statusMessage={statusMessage} account={account}>
+    {authError && <div className="sync-error" role="alert">{authError}</div>}
+    {activeView === 'today' && <TodayView><section className="today-hero"><p>Publishing desk</p><h2>Find a useful idea. Shape it with care. Publish it manually.</h2><button type="button" className="primary-button" onClick={createStarterDraft}>Continue to Studio</button></section><section className="today-brief"><div><h3>Current focus</h3><p>{selectedTopic?.title || 'Choose a topic to begin.'}</p></div><div><h3>Draft library</h3><p>{drafts.length} saved draft{drafts.length === 1 ? '' : 's'} ready to revisit.</p></div><div><h3>Manual by design</h3><p>Copy, download, and post only when the work feels like yours.</p></div></section><div className="today-stats">{dashboardStats.map((stat) => <span key={stat.label}><strong>{stat.value}</strong>{stat.label}</span>)}</div></TodayView>}
+    {activeView === 'discover' && <DiscoverView><section className="discover-layout"><article className="workspace-section"><div className="section-heading"><div><p>Editorial brief</p><h2>Your themes</h2></div></div><div className="interest-form"><input value={interestInput} onChange={(event) => setInterestInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') addInterest() }} placeholder="Add an interest, like Local LLMs" aria-label="Add interest" /><button type="button" className="primary-button" onClick={addInterest}>Add</button></div><div className="chip-list">{interests.map((interest) => <button key={interest} type="button" className="chip" onClick={() => setInterests((current) => current.filter((item) => item !== interest))}>{interest}<span aria-hidden="true">×</span></button>)}</div></article><article className="workspace-section topic-workspace"><div className="section-heading"><div><p>Topic desk</p><h2>Source-led ideas</h2></div><button type="button" className="secondary-button" onClick={fetchTopics} disabled={isFetchingTopics}>{isFetchingTopics ? <LoaderCircle className="spin" size={16} /> : <RefreshCw size={16} />}{isFetchingTopics ? 'Fetching' : 'Refresh'}</button></div>{topicError && <div className="topic-error" role="alert">{topicError} Starter topics are still available.</div>}<div className="topic-list">{topicPool.map((topic) => <button key={topic.id} type="button" className={topic.id === selectedTopicId ? 'topic-card selected' : 'topic-card'} onClick={() => setSelectedTopicId(topic.id)}><div className="topic-meta"><span>{topic.source}</span><span>{topic.matchedKeywords.join(', ') || topic.format}</span></div><strong>{topic.title}</strong><p>{topic.summary}</p>{topic.url && <span className="topic-source">{formatPublishedDate(topic.publishedAt)} · Source preserved</span>}</button>)}</div></article></section></DiscoverView>}
+    {activeView === 'library' && <LibraryView><section className="library-header"><div><p>Draft library</p><h2>Writing worth returning to</h2></div>{user && <button type="button" className="secondary-button" onClick={importLocalDrafts} disabled={isImportingDrafts || isDraftSyncLoading}>{isImportingDrafts ? 'Importing' : 'Import local drafts'}</button>}</section>{isDraftSyncLoading && <p className="sync-message">Syncing your Firestore drafts…</p>}{draftSyncError && <div className="sync-error" role="alert">{draftSyncError}</div>}<div className="draft-list library-list">{drafts.length === 0 ? <div className="empty-state">No drafts yet. Start in Discover, then shape the idea in Studio.</div> : drafts.map((draft) => <button key={draft.id} type="button" className="draft-card" onClick={() => openDraft(draft)}><div><strong>{draft.title}</strong><p>{draft.cardSubtitle}</p></div><span>{formatDate(draft.updatedAt)}</span></button>)}</div></LibraryView>}
+    {activeView === 'studio' && <StudioView><section className="studio-layout"><article className="editor-pane"><div className="section-heading"><div><p>Writing desk</p><h2>{generatedPost ? 'Refine the draft' : 'Begin with a topic'}</h2></div></div>{generatedPost ? <div className="editor-stack"><label><span>Caption</span><textarea rows={10} value={generatedPost.caption} onChange={(event) => setGeneratedPost((current) => current ? { ...current, caption: event.target.value } : current)} /></label><label><span>Hashtags</span><input value={generatedPost.hashtags.join(' ')} onChange={(event) => setGeneratedPost((current) => current ? { ...current, hashtags: event.target.value.split(' ').map((tag) => tag.trim()).filter(Boolean) } : current)} /></label><label><span>Card title</span><input value={generatedPost.cardTitle} onChange={(event) => setGeneratedPost((current) => current ? { ...current, cardTitle: event.target.value } : current)} /></label><label><span>Card subtitle</span><input value={generatedPost.cardSubtitle} onChange={(event) => setGeneratedPost((current) => current ? { ...current, cardSubtitle: event.target.value } : current)} /></label>{generatedPost.sourceCredit && <p className="source-credit">{generatedPost.sourceCredit}</p>}<div className="button-row">{safeExternalUrl(generatedPost.sourceUrl) && <a className="secondary-button" href={safeExternalUrl(generatedPost.sourceUrl)} target="_blank" rel="noreferrer">View source<ExternalLink size={16} /></a>}<button type="button" className="primary-button" onClick={copyCaption}><Copy size={16} />Copy caption</button><button type="button" className="secondary-button" onClick={downloadImage} disabled={isExporting}>{isExporting ? <LoaderCircle className="spin" size={16} /> : <Download size={16} />}{isExporting ? 'Exporting' : 'Download image'}</button><button type="button" className="secondary-button" onClick={saveDraft} disabled={Boolean(user && isDraftSyncLoading)}>Save draft</button><button type="button" className="secondary-button" onClick={generateWithGemini} disabled={isGenerating}>{isGenerating ? 'Generating' : 'Regenerate'}</button><a className="secondary-button" href={LINKEDIN_URL} target="_blank" rel="noreferrer">Open LinkedIn<ExternalLink size={16} /></a></div></div> : <div className="empty-state"><p>Select a topic in Discover, then create a local starter draft or generate with Gemini.</p><div className="button-row empty-actions"><button type="button" className="secondary-button" onClick={() => setActiveView('discover')}>Discover topics</button><button type="button" className="secondary-button" onClick={generateWithGemini} disabled={isGenerating}>{isGenerating ? 'Generating' : 'Generate with Gemini'}</button><button type="button" className="primary-button" onClick={createStarterDraft}>Create starter draft</button></div></div>}</article><aside className="preview-pane"><div className="section-heading"><div><p>Live preview</p><h2>Ready to review</h2></div></div>{generatedPost ? <><div className="linkedin-preview"><div className="profile-row"><div className="avatar">J</div><div><strong>Jack</strong><p>Student developer · Building in public</p></div></div><p className="preview-caption">{generatedPost.caption}</p><div className="hashtag-row">{generatedPost.hashtags.map((tag, index) => <span key={`${tag}-${index}`}>{tag}</span>)}</div></div><div className="image-card-preview" ref={imageCardRef}><div className="image-card-overlay" /><p className="image-card-kicker">PostForge · Student builder</p><strong>{generatedPost.cardTitle}</strong><span>{generatedPost.cardSubtitle}</span></div></> : <div className="empty-state">Your post and card preview will appear here.</div>}</aside></section></StudioView>}
+  </AppShell>
 }
 
 export default App
